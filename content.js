@@ -217,6 +217,15 @@
       startBlock.parentElement ||
       root;
 
+    // startBlock may be nested (e.g. <li> inside <ul> inside the container);
+    // find the direct-child ancestor of the container so we can partition
+    // container.children into "before" and "from here on".
+    let startChild = startBlock;
+    while (startChild && startChild.parentElement !== container) {
+      startChild = startChild.parentElement;
+    }
+    if (!startChild) { clearAll(); return 0; }
+
     // Default-blur strategy: the container is tagged with pending-scope, which
     // causes CSS to blur every direct child by default. Children that predate
     // the unclosed <spoiler> get tagged pending-before to opt back out. New
@@ -226,12 +235,12 @@
       container.classList.add("spoilergpt-pending-scope");
     }
 
-    // Mark children that come before startBlock as safe; strip the mark from
+    // Mark children that come before startChild as safe; strip the mark from
     // the rest so a previously-safe child that's now after a newly-opened
     // spoiler gets re-blurred.
     let foundStart = false;
     for (const child of Array.from(container.children)) {
-      if (child === startBlock) foundStart = true;
+      if (child === startChild) foundStart = true;
       if (!foundStart) {
         if (!child.classList.contains("spoilergpt-pending-before"))
           child.classList.add("spoilergpt-pending-before");
