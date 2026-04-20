@@ -1,0 +1,17 @@
+.spoilergpt-spoiler {
+  filter: blur(6px);
+  background: rgba(128, 128, 128, 0.18);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: filter 0.2s ease, background 0.2s ease;
+}
+
+.spoilergpt-spoiler:hover {
+  background: rgba(128, 128, 128, 0.28);
+}
+
+.spoilergpt-spoiler.spoilergpt-revealed {
+  filter: none;
+  background: rgba(128, 128, 128, 0.08);
+  cursor: text;
+}
