@@ -1,7 +1,8 @@
 .spoilergpt-spoiler,
 .spoilergpt-block-spoiler,
-.spoilergpt-pending {
-  filter: blur(6px);
+.spoilergpt-pending,
+.spoilergpt-pending ~ * {
+  filter: blur(8px) !important;
   cursor: pointer;
   transition: filter 0.2s ease, background 0.2s ease;
 }
@@ -18,13 +19,11 @@
 
 .spoilergpt-pending,
 .spoilergpt-pending ~ * {
-  filter: blur(6px);
   background: rgba(128, 128, 128, 0.10);
   border-radius: 6px;
-  cursor: default;
-  pointer-events: none;
-  user-select: none;
-  transition: filter 0.2s ease, background 0.2s ease;
+  cursor: default !important;
+  pointer-events: none !important;
+  user-select: none !important;
 }
 
 .spoilergpt-spoiler:hover,
@@ -34,7 +33,7 @@
 
 .spoilergpt-spoiler.spoilergpt-revealed,
 .spoilergpt-block-spoiler.spoilergpt-revealed {
-  filter: none;
+  filter: none !important;
   background: rgba(128, 128, 128, 0.08);
   cursor: text;
 }
