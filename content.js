@@ -169,9 +169,25 @@
   // --- Phase 3: unclosed <spoiler> → pending blur ---
 
   function wrapPending(root) {
-    const nodes = gatherTextNodes(root);
+    const clearStale = (keep) => {
+      root.querySelectorAll(".spoilergpt-pending").forEach((el) => {
+        if (!keep || !keep.has(el)) {
+          el.classList.remove("spoilergpt-pending");
+          delete el.dataset.spoilergptPending;
+        }
+      });
+    };
 
-    // Detect the earliest unclosed <spoiler>.
+    // Fast pre-check: if no <spoiler> substring anywhere, or every open is closed,
+    // we can skip the expensive tree walk.
+    const fullText = root.textContent || "";
+    const firstOpen = fullText.indexOf(OPEN);
+    if (firstOpen === -1) { clearStale(null); return 0; }
+    const lastOpen = fullText.lastIndexOf(OPEN);
+    const lastClose = fullText.lastIndexOf(CLOSE);
+    if (lastClose > lastOpen) { clearStale(null); return 0; }
+
+    const nodes = gatherTextNodes(root);
     let unclosedPos = -1;
     if (nodes.length) {
       const combined = nodes.map((t) => t.nodeValue).join("");
@@ -184,15 +200,6 @@
         i = c + CLOSE_LEN;
       }
     }
-
-    const clearStale = (keep) => {
-      root.querySelectorAll(".spoilergpt-pending").forEach((el) => {
-        if (!keep || !keep.has(el)) {
-          el.classList.remove("spoilergpt-pending");
-          delete el.dataset.spoilergptPending;
-        }
-      });
-    };
 
     if (unclosedPos === -1) {
       clearStale(null);
@@ -282,7 +289,13 @@
 
   try { scan(document.body); } catch (err) { console.error(TAG, "initial scan error", err); }
 
-  new MutationObserver(() => schedule()).observe(document.body, {
+  // Apply pending blur synchronously in the MutationObserver callback so it
+  // lands before the browser's next paint — debouncing here causes a visible
+  // flash of the streamed text before the blur kicks in.
+  new MutationObserver(() => {
+    try { wrapPending(document.body); } catch (err) { console.error(TAG, "pending error", err); }
+    schedule();
+  }).observe(document.body, {
     subtree: true,
     childList: true,
     characterData: true,
