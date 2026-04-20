@@ -1,16 +1,36 @@
-.spoilergpt-spoiler {
+.spoilergpt-spoiler,
+.spoilergpt-block-spoiler,
+.spoilergpt-pending {
   filter: blur(6px);
-  background: rgba(128, 128, 128, 0.18);
-  border-radius: 3px;
   cursor: pointer;
   transition: filter 0.2s ease, background 0.2s ease;
 }
 
-.spoilergpt-spoiler:hover {
+.spoilergpt-spoiler {
+  background: rgba(128, 128, 128, 0.18);
+  border-radius: 3px;
+}
+
+.spoilergpt-block-spoiler {
+  background: rgba(128, 128, 128, 0.10);
+  border-radius: 6px;
+}
+
+.spoilergpt-pending {
+  background: rgba(128, 128, 128, 0.10);
+  border-radius: 6px;
+  cursor: default;
+  pointer-events: none;
+  user-select: none;
+}
+
+.spoilergpt-spoiler:hover,
+.spoilergpt-block-spoiler:hover {
   background: rgba(128, 128, 128, 0.28);
 }
 
-.spoilergpt-spoiler.spoilergpt-revealed {
+.spoilergpt-spoiler.spoilergpt-revealed,
+.spoilergpt-block-spoiler.spoilergpt-revealed {
   filter: none;
   background: rgba(128, 128, 128, 0.08);
   cursor: text;

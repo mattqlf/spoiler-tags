@@ -1,9 +1,21 @@
 (() => {
-  const TAG = "[SpoilerGPT]";
+  const TAG = "[SpoilerTags]";
   console.log(TAG, "content script loaded", location.href);
 
-  const PAIR_RE = /<spoiler>([\s\S]*?)<\/spoiler>/gi;
+  const OPEN = "<spoiler>";
+  const CLOSE = "</spoiler>";
+  const OPEN_LEN = OPEN.length;
+  const CLOSE_LEN = CLOSE.length;
+
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "TEXTAREA", "INPUT", "NOSCRIPT", "BUTTON"]);
+  const BLOCK_TAGS = new Set([
+    "P", "DIV", "LI", "UL", "OL", "BLOCKQUOTE", "PRE", "H1", "H2", "H3", "H4", "H5", "H6",
+    "TABLE", "TD", "TH", "TR", "THEAD", "TBODY", "ARTICLE", "SECTION", "ASIDE", "MAIN",
+    "HEADER", "FOOTER", "DD", "DT", "DL", "FIGURE", "FIGCAPTION",
+  ]);
+
+  let groupCounter = 0;
+  const newGroupId = () => `sg-${++groupCounter}`;
 
   function shouldSkip(node) {
     let p = node.parentNode;
@@ -15,10 +27,37 @@
     return false;
   }
 
-  function makeSpoiler(text) {
+  function nearestBlock(node) {
+    let p = node.parentElement;
+    while (p) {
+      if (BLOCK_TAGS.has(p.tagName)) return p;
+      p = p.parentElement;
+    }
+    return document.body;
+  }
+
+  // Return block elements from startBlock to endBlock (inclusive) in document order.
+  function collectBlocks(startBlock, endBlock, root) {
+    if (startBlock === endBlock) return [startBlock];
+    const blocks = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+      acceptNode: (n) => BLOCK_TAGS.has(n.tagName) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP,
+    });
+    let found = false, n;
+    while ((n = walker.nextNode())) {
+      if (n === startBlock) found = true;
+      if (found) blocks.push(n);
+      if (n === endBlock) break;
+    }
+    if (blocks.length === 0) blocks.push(startBlock, endBlock);
+    else if (blocks[blocks.length - 1] !== endBlock) blocks.push(endBlock);
+    return blocks;
+  }
+
+  function makeInlineSpoiler(innerText) {
     const span = document.createElement("span");
     span.className = "spoilergpt-spoiler";
-    span.textContent = text;
+    span.textContent = innerText;
     span.title = "Click to reveal spoiler";
     span.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -27,51 +66,45 @@
     return span;
   }
 
+  // --- Phase 1: single-text-node inline matches ---
+
   function wrapTextNode(textNode) {
     const text = textNode.nodeValue;
-    if (!text || text.indexOf("<spoiler>") === -1) return 0;
+    if (!text || text.indexOf(OPEN) === -1) return 0;
     if (shouldSkip(textNode)) return 0;
 
-    PAIR_RE.lastIndex = 0;
+    const re = /<spoiler>([\s\S]*?)<\/spoiler>/gi;
     const frag = document.createDocumentFragment();
-    let lastIdx = 0;
-    let m, count = 0;
-    while ((m = PAIR_RE.exec(text)) !== null) {
+    let lastIdx = 0, count = 0, m;
+    while ((m = re.exec(text)) !== null) {
       if (m.index > lastIdx) frag.appendChild(document.createTextNode(text.slice(lastIdx, m.index)));
-      frag.appendChild(makeSpoiler(m[1]));
+      frag.appendChild(makeInlineSpoiler(m[1]));
       lastIdx = m.index + m[0].length;
       count++;
     }
-    if (count === 0) return 0;
+    if (!count) return 0;
     if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.slice(lastIdx)));
     textNode.parentNode.replaceChild(frag, textNode);
     return count;
   }
 
-  // Handle <spoiler>...</spoiler> whose text has been split across multiple text nodes
-  // (e.g. during streaming). Joins siblings within `root`, finds matches, rewrites nodes.
-  function wrapCrossNode(root) {
-    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  // --- Phase 2: cross-text-node matches → block-level blur ---
+
+  function gatherTextNodes(root) {
     const nodes = [];
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let n;
-    while ((n = w.nextNode())) { if (!shouldSkip(n)) nodes.push(n); }
-    if (nodes.length < 2) return 0;
-
-    const combined = nodes.map((t) => t.nodeValue).join("");
-    if (combined.indexOf("<spoiler>") === -1 || combined.indexOf("</spoiler>") === -1) return 0;
-
-    const re = /<spoiler>([\s\S]*?)<\/spoiler>/gi;
-    const matches = [];
-    let m;
-    while ((m = re.exec(combined)) !== null) {
-      matches.push({ start: m.index, end: m.index + m[0].length, inner: m[1] });
+    while ((n = w.nextNode())) {
+      if (shouldSkip(n)) continue;
+      nodes.push(n);
     }
-    if (!matches.length) return 0;
+    return nodes;
+  }
 
-    // Locate a char offset in the joined string back to its source (node, localOffset).
-    // At node boundaries, prefer the NEXT node (off=0) so spans get inserted inside the
-    // correct parent rather than as a sibling of the preceding unrelated text node.
-    const locate = (offset) => {
+  function locator(nodes) {
+    // Maps a combined-string offset back to (node, localOffset). At a node boundary,
+    // prefers the NEXT node so inserts land in the correct parent.
+    return (offset) => {
       let pos = 0;
       for (const t of nodes) {
         const len = t.nodeValue.length;
@@ -81,44 +114,157 @@
       const last = nodes[nodes.length - 1];
       return { node: last, off: last.nodeValue.length };
     };
+  }
 
-    let total = 0;
-    // Process in reverse so earlier offsets stay valid.
-    for (let i = matches.length - 1; i >= 0; i--) {
-      const { start, end, inner } = matches[i];
-      const s = locate(start), e = locate(end);
-      if (!s || !e) continue;
-      if (s.node === e.node) continue; // single-node matches handled by wrapTextNode
+  function wrapCrossBlock(root) {
+    const nodes = gatherTextNodes(root);
+    if (nodes.length < 2) return 0;
 
-      // Trim start node, insert span after it, trim end node, drop intermediates.
-      const startParent = s.node.parentNode;
-      if (!startParent) continue;
-      s.node.nodeValue = s.node.nodeValue.slice(0, s.off);
-      const span = makeSpoiler(inner);
-      startParent.insertBefore(span, s.node.nextSibling);
-      e.node.nodeValue = e.node.nodeValue.slice(e.off);
-      const sIdx = nodes.indexOf(s.node);
-      const eIdx = nodes.indexOf(e.node);
-      for (let j = sIdx + 1; j < eIdx; j++) {
-        const mid = nodes[j];
-        if (mid && mid.parentNode) mid.parentNode.removeChild(mid);
-      }
-      total++;
+    const combined = nodes.map((t) => t.nodeValue).join("");
+    if (combined.indexOf(OPEN) === -1 || combined.indexOf(CLOSE) === -1) return 0;
+
+    // Collect complete pairs.
+    const re = /<spoiler>[\s\S]*?<\/spoiler>/gi;
+    const matches = [];
+    let m;
+    while ((m = re.exec(combined)) !== null) {
+      matches.push({ openStart: m.index, closeStart: m.index + m[0].length - CLOSE_LEN });
     }
-    return total;
+    if (!matches.length) return 0;
+
+    const locate = locator(nodes);
+    let count = 0;
+
+    // Reverse order so earlier offsets stay valid while we mutate later nodes.
+    for (let i = matches.length - 1; i >= 0; i--) {
+      const { openStart, closeStart } = matches[i];
+      const s = locate(openStart);
+      const cs = locate(closeStart);
+      if (!s || !cs || s.node === cs.node) continue; // single-node cases are Phase 1
+
+      // Strip the literal tag characters so they don't show up anywhere.
+      s.node.nodeValue =
+        s.node.nodeValue.slice(0, s.off) + s.node.nodeValue.slice(s.off + OPEN_LEN);
+      cs.node.nodeValue =
+        cs.node.nodeValue.slice(0, cs.off) + cs.node.nodeValue.slice(cs.off + CLOSE_LEN);
+
+      const startBlock = nearestBlock(s.node);
+      const endBlock = nearestBlock(cs.node);
+      if (!startBlock || !endBlock) continue;
+
+      // Skip if already marked (idempotence across scans).
+      if (startBlock.classList.contains("spoilergpt-block-spoiler")) continue;
+
+      const blocks = collectBlocks(startBlock, endBlock, root);
+      const id = newGroupId();
+      for (const b of blocks) {
+        b.classList.add("spoilergpt-block-spoiler");
+        b.dataset.spoilergptGroup = id;
+      }
+      count++;
+    }
+    return count;
+  }
+
+  // --- Phase 3: unclosed <spoiler> → pending blur ---
+
+  function wrapPending(root) {
+    const nodes = gatherTextNodes(root);
+
+    // Detect the earliest unclosed <spoiler>.
+    let unclosedPos = -1;
+    if (nodes.length) {
+      const combined = nodes.map((t) => t.nodeValue).join("");
+      let i = 0;
+      while (true) {
+        const o = combined.indexOf(OPEN, i);
+        if (o === -1) break;
+        const c = combined.indexOf(CLOSE, o + OPEN_LEN);
+        if (c === -1) { unclosedPos = o; break; }
+        i = c + CLOSE_LEN;
+      }
+    }
+
+    const clearStale = (keep) => {
+      root.querySelectorAll(".spoilergpt-pending").forEach((el) => {
+        if (!keep || !keep.has(el)) {
+          el.classList.remove("spoilergpt-pending");
+          delete el.dataset.spoilergptPending;
+        }
+      });
+    };
+
+    if (unclosedPos === -1) {
+      clearStale(null);
+      return 0;
+    }
+
+    const locate = locator(nodes);
+    const s = locate(unclosedPos);
+    if (!s) { clearStale(null); return 0; }
+
+    const startBlock = nearestBlock(s.node);
+    if (!startBlock) { clearStale(null); return 0; }
+
+    // Scope: nearest plausible message container, or fall back to the start block's
+    // parent. We want to cover "everything the assistant has streamed from this
+    // open-tag onwards", not the whole page.
+    const container =
+      startBlock.closest("[data-message-author-role], .markdown, .prose, message-content, [data-testid='conversation-turn']") ||
+      startBlock.parentElement ||
+      root;
+
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT, {
+      acceptNode: (n) => BLOCK_TAGS.has(n.tagName) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP,
+    });
+    const keep = new Set();
+    let found = false, n;
+    while ((n = walker.nextNode())) {
+      if (n === startBlock) found = true;
+      if (found && !n.classList.contains("spoilergpt-block-spoiler")) {
+        n.classList.add("spoilergpt-pending");
+        n.dataset.spoilergptPending = "1";
+        keep.add(n);
+      }
+    }
+    // Also mark the startBlock even if the walker didn't enter it (it's a block itself).
+    if (!keep.has(startBlock)) {
+      startBlock.classList.add("spoilergpt-pending");
+      startBlock.dataset.spoilergptPending = "1";
+      keep.add(startBlock);
+    }
+    clearStale(keep);
+    return keep.size;
   }
 
   function scan(root) {
     if (!root || root.nodeType !== Node.ELEMENT_NODE) return 0;
-    let n = 0;
+    let inline = 0;
+    // Phase 1 walks text nodes directly.
     const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const texts = [];
     let t;
     while ((t = w.nextNode())) texts.push(t);
-    for (const tn of texts) n += wrapTextNode(tn);
-    n += wrapCrossNode(root);
-    return n;
+    for (const tn of texts) inline += wrapTextNode(tn);
+    // Phase 2 runs on whatever's left.
+    const cross = wrapCrossBlock(root);
+    // Phase 3 handles in-flight streaming.
+    wrapPending(root);
+    return inline + cross;
   }
+
+  // Delegated click for block-level spoilers (not pending).
+  document.addEventListener("click", (e) => {
+    const block = e.target.closest(".spoilergpt-block-spoiler");
+    if (!block) return;
+    if (block.classList.contains("spoilergpt-pending")) return;
+    const id = block.dataset.spoilergptGroup;
+    if (!id) return;
+    e.stopPropagation();
+    document.querySelectorAll(`[data-spoilergpt-group="${id}"]`).forEach((el) => {
+      el.classList.toggle("spoilergpt-revealed");
+    });
+  });
 
   let scheduled = false;
   function schedule() {
@@ -127,20 +273,14 @@
     setTimeout(() => {
       scheduled = false;
       try {
-        const n = scan(document.body);
-        if (n) console.log(TAG, "wrapped", n, "spoiler(s)");
+        scan(document.body);
       } catch (err) {
         console.error(TAG, "scan error", err);
       }
-    }, 150);
+    }, 80);
   }
 
-  try {
-    const initial = scan(document.body);
-    console.log(TAG, "initial scan wrapped", initial, "spoiler(s)");
-  } catch (err) {
-    console.error(TAG, "initial scan error", err);
-  }
+  try { scan(document.body); } catch (err) { console.error(TAG, "initial scan error", err); }
 
   new MutationObserver(() => schedule()).observe(document.body, {
     subtree: true,
