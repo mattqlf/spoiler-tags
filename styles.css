@@ -16,12 +16,15 @@
   border-radius: 6px;
 }
 
-.spoilergpt-pending {
+.spoilergpt-pending,
+.spoilergpt-pending ~ * {
+  filter: blur(6px);
   background: rgba(128, 128, 128, 0.10);
   border-radius: 6px;
   cursor: default;
   pointer-events: none;
   user-select: none;
+  transition: filter 0.2s ease, background 0.2s ease;
 }
 
 .spoilergpt-spoiler:hover,

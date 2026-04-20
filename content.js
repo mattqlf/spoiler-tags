@@ -169,23 +169,20 @@
   // --- Phase 3: unclosed <spoiler> → pending blur ---
 
   function wrapPending(root) {
-    const clearStale = (keep) => {
+    const clearAll = () => {
       root.querySelectorAll(".spoilergpt-pending").forEach((el) => {
-        if (!keep || !keep.has(el)) {
-          el.classList.remove("spoilergpt-pending");
-          delete el.dataset.spoilergptPending;
-        }
+        el.classList.remove("spoilergpt-pending");
+        delete el.dataset.spoilergptPending;
       });
     };
 
     // Fast pre-check: if no <spoiler> substring anywhere, or every open is closed,
     // we can skip the expensive tree walk.
     const fullText = root.textContent || "";
-    const firstOpen = fullText.indexOf(OPEN);
-    if (firstOpen === -1) { clearStale(null); return 0; }
+    if (fullText.indexOf(OPEN) === -1) { clearAll(); return 0; }
     const lastOpen = fullText.lastIndexOf(OPEN);
     const lastClose = fullText.lastIndexOf(CLOSE);
-    if (lastClose > lastOpen) { clearStale(null); return 0; }
+    if (lastClose > lastOpen) { clearAll(); return 0; }
 
     const nodes = gatherTextNodes(root);
     let unclosedPos = -1;
@@ -201,47 +198,31 @@
       }
     }
 
-    if (unclosedPos === -1) {
-      clearStale(null);
-      return 0;
-    }
+    if (unclosedPos === -1) { clearAll(); return 0; }
 
     const locate = locator(nodes);
     const s = locate(unclosedPos);
-    if (!s) { clearStale(null); return 0; }
+    if (!s) { clearAll(); return 0; }
 
     const startBlock = nearestBlock(s.node);
-    if (!startBlock) { clearStale(null); return 0; }
+    if (!startBlock) { clearAll(); return 0; }
 
-    // Scope: nearest plausible message container, or fall back to the start block's
-    // parent. We want to cover "everything the assistant has streamed from this
-    // open-tag onwards", not the whole page.
-    const container =
-      startBlock.closest("[data-message-author-role], .markdown, .prose, message-content, [data-testid='conversation-turn']") ||
-      startBlock.parentElement ||
-      root;
-
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT, {
-      acceptNode: (n) => BLOCK_TAGS.has(n.tagName) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP,
-    });
-    const keep = new Set();
-    let found = false, n;
-    while ((n = walker.nextNode())) {
-      if (n === startBlock) found = true;
-      if (found && !n.classList.contains("spoilergpt-block-spoiler")) {
-        n.classList.add("spoilergpt-pending");
-        n.dataset.spoilergptPending = "1";
-        keep.add(n);
+    // Apply the pending class to exactly one element: the block containing the
+    // unclosed <spoiler>. A CSS general-sibling selector (.spoilergpt-pending ~ *)
+    // handles every current and future sibling after it — so new paragraphs, list
+    // items, code blocks etc. inserted by React during streaming are blurred the
+    // moment they enter the DOM, without waiting for our next observer callback.
+    root.querySelectorAll(".spoilergpt-pending").forEach((el) => {
+      if (el !== startBlock) {
+        el.classList.remove("spoilergpt-pending");
+        delete el.dataset.spoilergptPending;
       }
-    }
-    // Also mark the startBlock even if the walker didn't enter it (it's a block itself).
-    if (!keep.has(startBlock)) {
+    });
+    if (!startBlock.classList.contains("spoilergpt-pending")) {
       startBlock.classList.add("spoilergpt-pending");
       startBlock.dataset.spoilergptPending = "1";
-      keep.add(startBlock);
     }
-    clearStale(keep);
-    return keep.size;
+    return 1;
   }
 
   function scan(root) {
