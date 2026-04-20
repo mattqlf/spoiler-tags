@@ -9,23 +9,44 @@
 
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "TEXTAREA", "INPUT", "NOSCRIPT", "BUTTON"]);
 
-  // Only process text inside the platforms' actual chat-response containers.
-  // Prevents <spoiler> tags appearing elsewhere on the page (skill previews,
-  // instruction editors, settings dialogs, custom-GPT builder, etc.) from
-  // being matched and silently stripped.
+  // Never touch text that lives inside one of these — rich-text editors used
+  // by Claude/ChatGPT/Gemini for skill editing, project instructions, custom
+  // GPT builders, composer inputs, etc.
+  const EDITOR_SKIP_SELECTOR = [
+    "[contenteditable]",
+    "[contenteditable='true']",
+    "[role='textbox']",
+    ".cm-editor",
+    ".cm-content",
+    ".CodeMirror",
+    ".CodeMirror-code",
+    ".monaco-editor",
+    ".ace_editor",
+    ".ProseMirror",
+    ".ql-editor",
+    "[data-lexical-editor]",
+  ].join(",");
+
+  // Only process text that lives inside a platform's actual chat-response
+  // container. Kept deliberately narrow (no generic .markdown/.prose) so we
+  // don't match skill previews or instruction editors that happen to share
+  // those utility classes.
   const CHAT_SCOPE_SELECTOR = [
     ".standard-markdown",
     ".progressive-markdown",
-    ".markdown",
-    ".prose",
+    ".font-claude-response",
     "[data-message-author-role='assistant']",
     "[data-message-author-role='user']",
-    ".font-claude-response",
+    "[data-testid='conversation-turn'] .markdown",
+    "message-content",
+    "model-response",
+    "user-query",
   ].join(",");
 
   function inChatScope(node) {
     const el = node && node.nodeType === Node.ELEMENT_NODE ? node : node && node.parentElement;
     if (!el) return false;
+    if (el.closest(EDITOR_SKIP_SELECTOR)) return false;
     return !!el.closest(CHAT_SCOPE_SELECTOR);
   }
   const BLOCK_TAGS = new Set([
