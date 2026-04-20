@@ -8,6 +8,26 @@
   const CLOSE_LEN = CLOSE.length;
 
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "TEXTAREA", "INPUT", "NOSCRIPT", "BUTTON"]);
+
+  // Only process text inside the platforms' actual chat-response containers.
+  // Prevents <spoiler> tags appearing elsewhere on the page (skill previews,
+  // instruction editors, settings dialogs, custom-GPT builder, etc.) from
+  // being matched and silently stripped.
+  const CHAT_SCOPE_SELECTOR = [
+    ".standard-markdown",
+    ".progressive-markdown",
+    ".markdown",
+    ".prose",
+    "[data-message-author-role='assistant']",
+    "[data-message-author-role='user']",
+    ".font-claude-response",
+  ].join(",");
+
+  function inChatScope(node) {
+    const el = node && node.nodeType === Node.ELEMENT_NODE ? node : node && node.parentElement;
+    if (!el) return false;
+    return !!el.closest(CHAT_SCOPE_SELECTOR);
+  }
   const BLOCK_TAGS = new Set([
     "P", "DIV", "LI", "UL", "OL", "BLOCKQUOTE", "PRE", "H1", "H2", "H3", "H4", "H5", "H6",
     "TABLE", "TD", "TH", "TR", "THEAD", "TBODY", "ARTICLE", "SECTION", "ASIDE", "MAIN",
@@ -22,9 +42,10 @@
     while (p && p.nodeType === Node.ELEMENT_NODE) {
       if (p.classList && p.classList.contains("spoilergpt-spoiler")) return true;
       if (SKIP_TAGS.has(p.tagName)) return true;
+      if (p.isContentEditable) return true;
       p = p.parentNode;
     }
-    return false;
+    return !inChatScope(node);
   }
 
   function nearestBlock(node) {
