@@ -15,16 +15,27 @@
   border-radius: 6px;
 }
 
-/* Streaming pending: default-blur every direct child of a pending-scope
-   container, except those tagged as predating the unclosed <spoiler>. */
-.spoilergpt-pending-scope > :not(.spoilergpt-pending-before) {
+/* Streaming pending: blur every descendant of the scope — direct children AND
+   anything nested inside them (code blocks wrapped in intermediate divs, etc.).
+   The double coverage means if Claude progressive-markdown renders a new element
+   anywhere inside the scope, it's blurred before the next paint. */
+.spoilergpt-pending-scope > *,
+.spoilergpt-pending-scope * {
   filter: blur(8px) !important;
-  background: rgba(128, 128, 128, 0.10);
-  border-radius: 6px;
   cursor: default !important;
   pointer-events: none !important;
   user-select: none !important;
-  transition: filter 0.2s ease, background 0.2s ease;
+  transition: filter 0.2s ease;
+}
+
+/* Content that predates the unclosed <spoiler> stays readable. Higher
+   specificity ensures this rule wins against the blur rule above. */
+.spoilergpt-pending-scope .spoilergpt-pending-before,
+.spoilergpt-pending-scope .spoilergpt-pending-before * {
+  filter: none !important;
+  cursor: auto !important;
+  pointer-events: auto !important;
+  user-select: auto !important;
 }
 
 .spoilergpt-spoiler:hover,
