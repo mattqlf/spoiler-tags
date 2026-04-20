@@ -1,7 +1,5 @@
 .spoilergpt-spoiler,
-.spoilergpt-block-spoiler,
-.spoilergpt-pending,
-.spoilergpt-pending ~ * {
+.spoilergpt-block-spoiler {
   filter: blur(8px) !important;
   cursor: pointer;
   transition: filter 0.2s ease, background 0.2s ease;
@@ -17,13 +15,16 @@
   border-radius: 6px;
 }
 
-.spoilergpt-pending,
-.spoilergpt-pending ~ * {
+/* Streaming pending: default-blur every direct child of a pending-scope
+   container, except those tagged as predating the unclosed <spoiler>. */
+.spoilergpt-pending-scope > :not(.spoilergpt-pending-before) {
+  filter: blur(8px) !important;
   background: rgba(128, 128, 128, 0.10);
   border-radius: 6px;
   cursor: default !important;
   pointer-events: none !important;
   user-select: none !important;
+  transition: filter 0.2s ease, background 0.2s ease;
 }
 
 .spoilergpt-spoiler:hover,

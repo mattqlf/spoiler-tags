@@ -170,10 +170,10 @@
 
   function wrapPending(root) {
     const clearAll = () => {
-      root.querySelectorAll(".spoilergpt-pending").forEach((el) => {
-        el.classList.remove("spoilergpt-pending");
-        delete el.dataset.spoilergptPending;
-      });
+      root.querySelectorAll(".spoilergpt-pending-scope").forEach((el) =>
+        el.classList.remove("spoilergpt-pending-scope"));
+      root.querySelectorAll(".spoilergpt-pending-before").forEach((el) =>
+        el.classList.remove("spoilergpt-pending-before"));
     };
 
     // Fast pre-check: if no <spoiler> substring anywhere, or every open is closed,
@@ -207,21 +207,46 @@
     const startBlock = nearestBlock(s.node);
     if (!startBlock) { clearAll(); return 0; }
 
-    // Apply the pending class to exactly one element: the block containing the
-    // unclosed <spoiler>. A CSS general-sibling selector (.spoilergpt-pending ~ *)
-    // handles every current and future sibling after it — so new paragraphs, list
-    // items, code blocks etc. inserted by React during streaming are blurred the
-    // moment they enter the DOM, without waiting for our next observer callback.
-    root.querySelectorAll(".spoilergpt-pending").forEach((el) => {
-      if (el !== startBlock) {
-        el.classList.remove("spoilergpt-pending");
-        delete el.dataset.spoilergptPending;
-      }
-    });
-    if (!startBlock.classList.contains("spoilergpt-pending")) {
-      startBlock.classList.add("spoilergpt-pending");
-      startBlock.dataset.spoilergptPending = "1";
+    // Find a stable ancestor container whose direct children are the paragraphs,
+    // lists, code blocks etc. of the response. This container survives React
+    // re-renders of its children — a critical property for defeating the
+    // streaming flash: when Claude replaces a <p> with a fresh <p> or transforms
+    // it into a <ul>, the container is unchanged.
+    const container =
+      startBlock.closest(".standard-markdown, .progressive-markdown, .markdown, .prose") ||
+      startBlock.parentElement ||
+      root;
+
+    // Default-blur strategy: the container is tagged with pending-scope, which
+    // causes CSS to blur every direct child by default. Children that predate
+    // the unclosed <spoiler> get tagged pending-before to opt back out. New
+    // children appended/replaced during streaming start with no class → blurred
+    // immediately with zero race condition against our JS.
+    if (!container.classList.contains("spoilergpt-pending-scope")) {
+      container.classList.add("spoilergpt-pending-scope");
     }
+
+    // Mark children that come before startBlock as safe; strip the mark from
+    // the rest so a previously-safe child that's now after a newly-opened
+    // spoiler gets re-blurred.
+    let foundStart = false;
+    for (const child of Array.from(container.children)) {
+      if (child === startBlock) foundStart = true;
+      if (!foundStart) {
+        if (!child.classList.contains("spoilergpt-pending-before"))
+          child.classList.add("spoilergpt-pending-before");
+      } else {
+        if (child.classList.contains("spoilergpt-pending-before"))
+          child.classList.remove("spoilergpt-pending-before");
+      }
+    }
+
+    // Clear any stale pending-scope on other containers (e.g. a previous
+    // response whose spoiler has since closed).
+    root.querySelectorAll(".spoilergpt-pending-scope").forEach((el) => {
+      if (el !== container) el.classList.remove("spoilergpt-pending-scope");
+    });
+
     return 1;
   }
 
